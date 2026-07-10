@@ -1,0 +1,21 @@
+# superpowers build artifacts (kept out of git history)
+docs/superpowers/
+.superpowers/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# notebooks
+.ipynb_checkpoints/
+
+# data (committed exceptions live in data/ — see README)
+data/warehouse.duckdb
+data/raw/
+
+# env
+.env
