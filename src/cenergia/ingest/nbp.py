@@ -50,6 +50,6 @@ def fetch_eur_pln(start: date, end: date) -> pd.DataFrame:
     df = pd.DataFrame(rows)[["effectiveDate", "mid"]].rename(
         columns={"effectiveDate": "date", "mid": "eur_pln"}
     )
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"]).astype("datetime64[ns]")
     df["eur_pln"] = df["eur_pln"].astype("float64")
     return df.sort_values("date").reset_index(drop=True)

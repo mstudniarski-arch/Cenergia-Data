@@ -37,6 +37,7 @@ def test_fetch_chunks_at_90_days(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(windows) == 3
     assert df.columns.tolist() == ["date", "eur_pln"]
     assert len(df) == 6  # 2 rows per chunk
+    assert str(df["date"].dtype) == "datetime64[ns]"  # warehouse convention
 
 
 def test_404_empty_range_tolerated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,3 +48,17 @@ def test_404_empty_range_tolerated(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     df = nbp.fetch_eur_pln(date(2015, 1, 3), date(2015, 1, 4))  # weekend-only range
     assert df.empty
+
+
+def test_connection_error_retries_then_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = {"n": 0}
+
+    def always_fail(url: str, timeout: int = 0) -> FakeResponse:
+        attempts["n"] += 1
+        raise nbp.requests.ConnectionError("network down")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(nbp.requests, "get", always_fail)  # type: ignore[attr-defined]
+    monkeypatch.setattr(nbp.time, "sleep", lambda s: None)  # type: ignore[attr-defined]
+    with pytest.raises(nbp.NbpApiError):
+        nbp.fetch_eur_pln(date(2015, 1, 1), date(2015, 1, 2))
+    assert attempts["n"] == 4  # 1 try + 3 retries
