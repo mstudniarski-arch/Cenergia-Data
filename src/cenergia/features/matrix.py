@@ -82,12 +82,13 @@ def build_matrix(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     out["price_lag48"] = price.shift(48)
     out["price_lag168"] = price.shift(168)
     lag24 = price.shift(24)
-    # min_periods=1: allow a shorter warm-up window near the start of history.
-    # The hard leakage guarantee lives in the dropna on price_lag168 below
-    # (which needs a full 168h of prior data); this rolling stat is a softer
-    # "as much trailing history as available" feature and is fine partial.
-    out["price_roll7d_mean"] = lag24.rolling(168, min_periods=1).mean()
-    out["price_roll7d_std"] = lag24.rolling(168, min_periods=1).std()
+    # Full window required (default min_periods == 168): partial-window rolling
+    # stats near the start of history would be noisy, and the dropna on
+    # price_roll7d_mean below is what enforces the warm-up boundary — the first
+    # surviving row is the first with BOTH a full lag168 and a complete
+    # 168-point window on lag24 (pinned by test_first_row_is_full_window_boundary).
+    out["price_roll7d_mean"] = lag24.rolling(168).mean()
+    out["price_roll7d_std"] = lag24.rolling(168).std()
     for col in ("load_fcst_mw", "temp_c", "wind_ms", "ghi_wm2", "cloud_pct"):
         out[col] = df[col]
 
