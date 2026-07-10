@@ -60,3 +60,19 @@ def test_cities_frame_shape() -> None:
     df = om.cities_frame()
     assert df.columns.tolist() == ["city", "lat", "lon", "weight"]
     assert len(df) == len(om.CITIES)
+
+
+def test_connection_error_retries_then_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = {"n": 0}
+
+    def always_fail(
+        url: str, params: dict[str, Any] | None = None, timeout: int = 0
+    ) -> FakeResponse:
+        attempts["n"] += 1
+        raise om.requests.ConnectionError("network down")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(om.requests, "get", always_fail)  # type: ignore[attr-defined]
+    monkeypatch.setattr(om.time, "sleep", lambda s: None)  # type: ignore[attr-defined]
+    with pytest.raises(om.OpenMeteoError):
+        om.fetch_history(date(2024, 6, 14), date(2024, 6, 14), cities=om.CITIES[:1])
+    assert attempts["n"] == 4  # 1 try + 3 retries
