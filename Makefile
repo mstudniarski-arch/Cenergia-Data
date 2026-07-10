@@ -1,4 +1,4 @@
-.PHONY: test lint fmt ingest transform backtest train-artifact snapshot dashboard
+.PHONY: test lint fmt ingest transform backtest train-artifact snapshot validate dashboard
 
 test:
 	uv run pytest -q
@@ -9,9 +9,23 @@ lint:
 fmt:
 	uv run ruff format .
 
-# pipeline targets are wired in Task 12; keep stubs failing loudly until then
-ingest transform backtest train-artifact snapshot:
-	@echo "wired in Task 12" && exit 1
+ingest:
+	uv run python -m cenergia.pipeline ingest --start 2024-06-14
+
+transform:
+	uv run python -m cenergia.pipeline transform
+
+backtest:
+	uv run python -m cenergia.pipeline backtest --months 6
+
+train-artifact:
+	uv run python -m cenergia.pipeline train-artifact --holdout-days 30
+
+snapshot:
+	uv run python -m cenergia.pipeline snapshot
+
+validate:
+	uv run python -m cenergia.pipeline validate
 
 dashboard:
 	uv run streamlit run src/cenergia/dashboard/app.py
