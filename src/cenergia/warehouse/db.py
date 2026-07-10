@@ -16,6 +16,7 @@ def connect(db_path: Path | str) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(db_path))
     for schema in _SCHEMAS:
         con.execute(f"create schema if not exists {schema}")
+    con.execute("set timezone='UTC'")
     return con
 
 

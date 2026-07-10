@@ -47,3 +47,8 @@ def test_load_frames_registers_raw_tables() -> None:
     con = db.connect(":memory:")
     db.load_frames(con, {"pse_csdac_pln": pd.DataFrame({"x": [1]})})
     assert con.execute("select x from raw.pse_csdac_pln").fetchone()[0] == 1  # type: ignore[index]
+
+
+def test_connect_sets_utc_timezone() -> None:
+    con = db.connect(":memory:")
+    assert con.execute("select current_setting('TimeZone')").fetchone()[0] == "UTC"  # type: ignore[index]
