@@ -1,0 +1,32 @@
+{
+  "value": [
+    {
+      "business_date": "2026-07-01",
+      "dtime_utc": "2026-06-30 23:15:00",
+      "period": "00:15 - 00:30",
+      "load_actual": 15234.5,
+      "load_fcst": 15200.0
+    },
+    {
+      "business_date": "2026-07-01",
+      "dtime_utc": "2026-06-30 23:45:00",
+      "period": "00:45 - 01:00",
+      "load_actual": 15245.2,
+      "load_fcst": 15210.5
+    },
+    {
+      "business_date": "2026-07-02",
+      "dtime_utc": "2026-07-01 18:00:00",
+      "period": "19:00 - 19:15",
+      "load_actual": null,
+      "load_fcst": 16100.0
+    },
+    {
+      "business_date": "2026-07-02",
+      "dtime_utc": "2026-07-01 18:30:00",
+      "period": "19:30 - 19:45",
+      "load_actual": null,
+      "load_fcst": 16120.5
+    }
+  ]
+}
