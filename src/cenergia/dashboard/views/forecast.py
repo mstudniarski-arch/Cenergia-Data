@@ -9,6 +9,8 @@ only draws from the already-computed `LiveForecast`.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -29,10 +31,14 @@ def render(live: LiveForecast) -> None:
     st.header("Tomorrow's forecast")
 
     if live.degraded:
-        as_of = live.frame["ts_utc"].max()
+        # frame can be empty if the snapshot fallback itself failed too
+        # (live._get_live_forecast_uncached's double-failure path) — max()
+        # is NaT then, so name the snapshot date only when there is one.
+        ts_max = live.frame["ts_utc"].max()
+        as_of = f"{ts_max:%Y-%m-%d %H:%M} UTC" if pd.notna(ts_max) else "unavailable"
         st.warning(
             "Live PSE/weather data is unavailable right now — showing the last known "
-            f"snapshot instead (as of {as_of:%Y-%m-%d %H:%M} UTC). No live forecast to "
+            f"snapshot instead (as of {as_of}). No live forecast to "
             "show until the next successful refresh."
         )
 
@@ -65,11 +71,22 @@ def _tomorrow_slice(frame: pd.DataFrame, made_at_utc: pd.Timestamp) -> pd.DataFr
 def _tomorrow_window_utc(made_at_utc: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp]:
     """[start, end) UTC bounds of the Warsaw-local calendar day after
     `made_at_utc` — 23/24/25 hours across a DST transition, 24 otherwise.
+
+    Every day-step here is *calendar* arithmetic on plain dates, localized to
+    midnight only afterwards. Adding `pd.Timedelta(days=1)` to a tz-aware
+    timestamp instead would be absolute 24-hour arithmetic, which goes wrong
+    twice near DST transitions: `start_local + 1 day` overshoots the next
+    local midnight on the 23-hour spring-forward day (leaking an hour of the
+    day after into the window) and undershoots it on the 25-hour fall-back
+    day (dropping the day's last hour); and `(local_now + 1 day).date()`
+    evaluated in the last local hour before a spring-forward day skips
+    "tomorrow" entirely. Pinned by the parametrized DST cases in
+    tests/unit/dashboard/test_live.py.
     """
     local_now = made_at_utc.tz_localize("UTC").tz_convert(_WARSAW_TZ)
-    tomorrow_local_date = (local_now + pd.Timedelta(days=1)).date()
+    tomorrow_local_date = local_now.date() + timedelta(days=1)
     start_local = pd.Timestamp(tomorrow_local_date, tz=_WARSAW_TZ)
-    end_local = start_local + pd.Timedelta(days=1)
+    end_local = pd.Timestamp(tomorrow_local_date + timedelta(days=1), tz=_WARSAW_TZ)
     start_utc = start_local.tz_convert("UTC").tz_localize(None)
     end_utc = end_local.tz_convert("UTC").tz_localize(None)
     return start_utc, end_utc

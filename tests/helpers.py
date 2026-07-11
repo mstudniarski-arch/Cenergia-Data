@@ -13,6 +13,12 @@ from pathlib import Path
 
 import pandas as pd
 
+# Re-exported (the redundant `as` aliases satisfy mypy strict's
+# no_implicit_reexport) so tests exercise the exact empty-stub frames the
+# live path supplies, rather than byte-for-byte copies that could drift.
+from cenergia.dashboard.live import empty_ember_frame as empty_ember_frame
+from cenergia.dashboard.live import empty_gen_frame as empty_gen_frame
+from cenergia.dashboard.live import empty_nbp_frame as empty_nbp_frame
 from cenergia.ingest.openmeteo import CITIES
 
 
@@ -162,34 +168,3 @@ def hourly_weather_frame(start: str, hours: int) -> pd.DataFrame:
         for city in CITIES
     ]
     return pd.concat(frames, ignore_index=True)
-
-
-def empty_gen_frame() -> pd.DataFrame:
-    """Empty `pse_his_gen_pal` stub — right columns/dtypes, zero rows. Live
-    forecasting doesn't need generation-mix history (Task 18); `dtype="string"`
-    (not plain `object`) matters here — an empty object-dtype column registers
-    with DuckDB as INTEGER, breaking `try_strptime(dtime_utc, ...)`.
-    """
-    return pd.DataFrame(
-        {
-            "dtime_utc": pd.Series(dtype="string"),
-            "alias_entsoe": pd.Series(dtype="string"),
-            "value": pd.Series(dtype="float64"),
-        }
-    )
-
-
-def empty_nbp_frame() -> pd.DataFrame:
-    """Empty `nbp_fx` stub — `01_staging_fx.sql` tolerates a bounds-less spine."""
-    return pd.DataFrame(
-        {"date": pd.Series(dtype="datetime64[ns]"), "eur_pln": pd.Series(dtype="float64")}
-    )
-
-
-def empty_ember_frame() -> pd.DataFrame:
-    """Empty `ember_pl` stub — `03_staging_price_long.sql`'s union then yields
-    only PSE rows.
-    """
-    return pd.DataFrame(
-        {"ts_utc": pd.Series(dtype="datetime64[ns]"), "price_eur_mwh": pd.Series(dtype="float64")}
-    )

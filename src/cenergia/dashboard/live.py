@@ -76,8 +76,14 @@ def _get_live_forecast_uncached(now_utc: pd.Timestamp | None = None) -> LiveFore
         frame = _pull_and_predict(made_at)
         degraded = False
     except Exception:
-        frame = _degraded_frame()
         degraded = True
+        try:
+            frame = _degraded_frame()
+        except Exception:
+            # Even the snapshot fallback failed (e.g. missing snapshot
+            # parquets on a fresh checkout) — degrade all the way to an
+            # empty typed frame rather than letting the page crash.
+            frame = _empty_live_frame()
     return LiveForecast(made_at_utc=made_at, frame=frame, degraded=degraded, train_end=train_end)
 
 
@@ -97,11 +103,11 @@ def _pull_and_predict(now_utc: pd.Timestamp) -> pd.DataFrame:
         "pse_csdac_pln": pse.fetch_entity("csdac-pln", start, end),
         "pse_kse_load": pse.fetch_entity("kse-load", start, end),
         "pse_his_wlk_cal": pse.fetch_entity("his-wlk-cal", start, end),
-        "pse_his_gen_pal": _empty_gen_frame(),
+        "pse_his_gen_pal": empty_gen_frame(),
         "weather_history": openmeteo.fetch_forecast(days=2, past_days=_PULL_DAYS),
         "weather_cities": openmeteo.cities_frame(),
-        "nbp_fx": _empty_nbp_frame(),
-        "ember_pl": _empty_ember_frame(),
+        "nbp_fx": empty_nbp_frame(),
+        "ember_pl": empty_ember_frame(),
     }
 
     con = db.connect(":memory:")
@@ -119,6 +125,9 @@ def _pull_and_predict(now_utc: pd.Timestamp) -> pd.DataFrame:
             "y_actual": matrix["y"].to_numpy(),
         }
     )
+    # Deliberately a plain UTC-day cutoff (unlike the Warsaw-local "tomorrow"
+    # window in views/forecast.py): this is a retention floor for the trailing
+    # chart/MAE, where single-hour precision at the far edge doesn't matter.
     window_start = now_utc.normalize() - pd.Timedelta(days=_TRAILING_DAYS)
     frame = frame[frame["ts_utc"] >= window_start].reset_index(drop=True)
     return frame
@@ -135,9 +144,31 @@ def _degraded_frame() -> pd.DataFrame:
     )
 
 
-def _empty_gen_frame() -> pd.DataFrame:
-    # dtype="string" (not "object"): an empty object-dtype column registers
-    # with DuckDB as INTEGER, breaking try_strptime(dtime_utc, ...).
+def _empty_live_frame() -> pd.DataFrame:
+    """Last-resort frame when both the live pull and the snapshot fallback
+    fail: right columns/dtypes, zero rows — the view renders empty charts and
+    an 'unavailable' banner instead of crashing.
+    """
+    return pd.DataFrame(
+        {
+            "ts_utc": pd.Series(dtype="datetime64[ns]"),
+            "y_pred": pd.Series(dtype="float64"),
+            "y_actual": pd.Series(dtype="float64"),
+        }
+    )
+
+
+# The empty raw-table stubs below are public: tests/helpers.py re-exports
+# them so unit tests exercise the exact frames the live path supplies rather
+# than byte-for-byte copies that could drift.
+
+
+def empty_gen_frame() -> pd.DataFrame:
+    """Empty `pse_his_gen_pal` stub — generation mix isn't a modeling column,
+    so the live path skips a 45-day, 13-fuel fetch. `dtype="string"` (not
+    plain `object`) matters: an empty object-dtype column registers with
+    DuckDB as INTEGER, breaking `try_strptime(dtime_utc, ...)`.
+    """
     return pd.DataFrame(
         {
             "dtime_utc": pd.Series(dtype="string"),
@@ -147,13 +178,17 @@ def _empty_gen_frame() -> pd.DataFrame:
     )
 
 
-def _empty_nbp_frame() -> pd.DataFrame:
+def empty_nbp_frame() -> pd.DataFrame:
+    """Empty `nbp_fx` stub — `01_staging_fx.sql` tolerates a bounds-less spine."""
     return pd.DataFrame(
         {"date": pd.Series(dtype="datetime64[ns]"), "eur_pln": pd.Series(dtype="float64")}
     )
 
 
-def _empty_ember_frame() -> pd.DataFrame:
+def empty_ember_frame() -> pd.DataFrame:
+    """Empty `ember_pl` stub — `03_staging_price_long.sql`'s union then yields
+    only PSE rows.
+    """
     return pd.DataFrame(
         {"ts_utc": pd.Series(dtype="datetime64[ns]"), "price_eur_mwh": pd.Series(dtype="float64")}
     )

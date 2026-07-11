@@ -23,6 +23,7 @@ import pytest
 
 from cenergia import paths
 from cenergia.dashboard import data_access, live
+from cenergia.dashboard.views.forecast import _tomorrow_window_utc
 from cenergia.features.matrix import FEATURES, build_matrix
 from cenergia.ingest import pse
 from cenergia.ingest.openmeteo import cities_frame
@@ -117,18 +118,16 @@ def test_happy_path_predicts_24_hours_for_tomorrow(live_artifact: str) -> None:
     assert list(result.frame.columns) == ["ts_utc", "y_pred", "y_actual"]
 
     # PSE delivery days are Europe/Warsaw *local* calendar days, not UTC
-    # calendar days (Warsaw's UTC offset is never zero) — derived
-    # independently here (not by calling into views/forecast.py) so a bug in
-    # that module's own boundary math wouldn't be invisible to this test.
-    # This exact mismatch was caught by the manual live check (task-18
-    # report): a naive `NOW_UTC.normalize() + 1 day` boundary only picked up
-    # 22/24 hours.
-    local_now = NOW_UTC.tz_localize("UTC").tz_convert("Europe/Warsaw")
-    tomorrow_local_date = (local_now + pd.Timedelta(days=1)).date()
-    start_local = pd.Timestamp(tomorrow_local_date, tz="Europe/Warsaw")
-    end_local = start_local + pd.Timedelta(days=1)
-    tomorrow_start = start_local.tz_convert("UTC").tz_localize(None)
-    tomorrow_end = end_local.tz_convert("UTC").tz_localize(None)
+    # calendar days (Warsaw's UTC offset is never zero). Bounds are
+    # HAND-DERIVED literals, deliberately not computed with any implementation
+    # expression — a shared bug would then be invisible to this test (exactly
+    # what happened to this assertion's first version, which hand-copied the
+    # buggy `+ pd.Timedelta(days=1)` boundary math from views/forecast.py):
+    # now = 2026-03-15 09:00 UTC = 10:00 CET (UTC+1, before the 2026-03-29
+    # spring-forward), so tomorrow is local day 2026-03-16, i.e.
+    # [2026-03-15 23:00 UTC, 2026-03-16 23:00 UTC).
+    tomorrow_start = pd.Timestamp("2026-03-15 23:00:00")
+    tomorrow_end = pd.Timestamp("2026-03-16 23:00:00")
     tomorrow = result.frame[
         (result.frame["ts_utc"] >= tomorrow_start) & (result.frame["ts_utc"] < tomorrow_end)
     ]
@@ -138,6 +137,69 @@ def test_happy_path_predicts_24_hours_for_tomorrow(live_artifact: str) -> None:
     # Trailing-30-day window: frame reaches back at least ~25 days (loose
     # bound — the exact start depends on the 7-day rolling warm-up).
     assert result.frame["ts_utc"].min() <= NOW_UTC.normalize() - pd.Timedelta(days=25)
+
+
+@pytest.mark.parametrize(
+    ("now_utc", "expected_start", "expected_end", "expected_hours"),
+    [
+        # All expected bounds are HAND-DERIVED literal constants (CET = UTC+1,
+        # CEST = UTC+2; Warsaw 2026 transitions: spring-forward Sun 2026-03-29,
+        # fall-back Sun 2026-10-25) — never computed with the implementation's
+        # own expressions, so shared boundary-math bugs can't hide.
+        pytest.param(
+            # Normal day: now 09:00 UTC = 10:00 CET on 03-15; tomorrow is
+            # local day 2026-03-16 (CET all day): midnight CET = 23:00 UTC
+            # the previous evening, both ends. 24 hours.
+            pd.Timestamp("2026-03-15 09:00:00"),
+            pd.Timestamp("2026-03-15 23:00:00"),
+            pd.Timestamp("2026-03-16 23:00:00"),
+            24,
+            id="normal-day",
+        ),
+        pytest.param(
+            # Spring-forward: tomorrow is 2026-03-29, the 23-hour day.
+            # Start: 2026-03-29 00:00 CET (UTC+1) = 2026-03-28 23:00 UTC.
+            # End: 2026-03-30 00:00 CEST (UTC+2) = 2026-03-29 22:00 UTC.
+            pd.Timestamp("2026-03-28 09:00:00"),
+            pd.Timestamp("2026-03-28 23:00:00"),
+            pd.Timestamp("2026-03-29 22:00:00"),
+            23,
+            id="spring-forward-23h",
+        ),
+        pytest.param(
+            # Fall-back: tomorrow is 2026-10-25, the 25-hour day.
+            # Start: 2026-10-25 00:00 CEST (UTC+2) = 2026-10-24 22:00 UTC.
+            # End: 2026-10-26 00:00 CET (UTC+1) = 2026-10-25 23:00 UTC.
+            pd.Timestamp("2026-10-24 09:00:00"),
+            pd.Timestamp("2026-10-24 22:00:00"),
+            pd.Timestamp("2026-10-25 23:00:00"),
+            25,
+            id="fall-back-25h",
+        ),
+        pytest.param(
+            # Last local hour before the spring-forward day: now 22:30 UTC on
+            # 03-28 = 23:30 CET; tomorrow must still be 2026-03-29 — naive
+            # `local_now + 24h` would overshoot the 23-hour day entirely and
+            # land on 03-30.
+            pd.Timestamp("2026-03-28 22:30:00"),
+            pd.Timestamp("2026-03-28 23:00:00"),
+            pd.Timestamp("2026-03-29 22:00:00"),
+            23,
+            id="late-evening-before-spring-forward",
+        ),
+    ],
+)
+def test_tomorrow_window_is_warsaw_local_day_dst_aware(
+    now_utc: pd.Timestamp,
+    expected_start: pd.Timestamp,
+    expected_end: pd.Timestamp,
+    expected_hours: int,
+) -> None:
+    start, end = _tomorrow_window_utc(now_utc)
+
+    assert start == expected_start
+    assert end == expected_end
+    assert end - start == pd.Timedelta(hours=expected_hours)
 
 
 def test_get_live_forecast_degrades_on_pse_error(
@@ -162,6 +224,28 @@ def test_get_live_forecast_degrades_on_pse_error(
         snap.recent_hourly["ts_utc"].reset_index(drop=True),
         check_names=False,
     )
+
+
+def test_double_failure_yields_empty_typed_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live pull fails AND the snapshot fallback fails (e.g. missing parquets
+    on a fresh checkout) — still no exception: empty typed frame, degraded.
+    """
+
+    def _raise_pse(entity: str, start: object, end: object) -> pd.DataFrame:
+        raise pse.PseApiError("simulated PSE outage")
+
+    def _raise_snapshot() -> object:
+        raise FileNotFoundError("missing dashboard snapshot file")
+
+    monkeypatch.setattr(live.pse, "fetch_entity", _raise_pse)
+    monkeypatch.setattr(live, "load_snapshot", _raise_snapshot)
+
+    result = live._get_live_forecast_uncached(now_utc=NOW_UTC)
+
+    assert result.degraded is True
+    assert list(result.frame.columns) == ["ts_utc", "y_pred", "y_actual"]
+    assert result.frame.empty
+    assert result.frame["ts_utc"].dtype == "datetime64[ns]"
 
 
 def test_get_live_forecast_is_cached() -> None:
