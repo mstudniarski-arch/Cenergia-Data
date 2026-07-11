@@ -106,6 +106,32 @@ _DRIVERS_GEN_COLS = (
 )
 
 
+_FUELS_TS1: dict[str, float] = {
+    "lignite": 5000.0,
+    "hard_coal": 3000.0,
+    "gas": 1000.0,
+    "solar": 2000.0,
+    "wind_onshore": 1000.0,
+    "biomass": 200.0,
+    "pumped_storage": 50.0,
+    "hydro_ror": 100.0,
+    "hydro_res": 80.0,
+    "other": 70.0,
+}
+_FUELS_TS2: dict[str, float] = {
+    "lignite": 4800.0,
+    "hard_coal": 2900.0,
+    "gas": 1100.0,
+    "solar": 2200.0,
+    "wind_onshore": 900.0,
+    "biomass": 210.0,
+    "pumped_storage": 40.0,
+    "hydro_ror": 110.0,
+    "hydro_res": 90.0,
+    "other": 60.0,
+}
+
+
 def _seed_drivers_warehouse(db_path: Path) -> None:
     con = db.connect(db_path)
 
@@ -130,34 +156,10 @@ def _seed_drivers_warehouse(db_path: Path) -> None:
             "load_fcst_mw": [15000.0, 15500.0, 15900.0],
         }
     )
-    fuels_ts1 = {
-        "lignite": 5000.0,
-        "hard_coal": 3000.0,
-        "gas": 1000.0,
-        "solar": 2000.0,
-        "wind_onshore": 1000.0,
-        "biomass": 200.0,
-        "pumped_storage": 50.0,
-        "hydro_ror": 100.0,
-        "hydro_res": 80.0,
-        "other": 70.0,
-    }
-    fuels_ts2 = {
-        "lignite": 4800.0,
-        "hard_coal": 2900.0,
-        "gas": 1100.0,
-        "solar": 2200.0,
-        "wind_onshore": 900.0,
-        "biomass": 210.0,
-        "pumped_storage": 40.0,
-        "hydro_ror": 110.0,
-        "hydro_res": 90.0,
-        "other": 60.0,
-    }
     gen_mix_hourly = pd.DataFrame(
         [
             {"ts_utc": ts, "fuel": fuel, "gen_mw": gen_mw}
-            for ts, fuels in ((_TS1, fuels_ts1), (_TS2, fuels_ts2))
+            for ts, fuels in ((_TS1, _FUELS_TS1), (_TS2, _FUELS_TS2))
             for fuel, gen_mw in fuels.items()
         ]
         + [{"ts_utc": _TS_EXTRA, "fuel": "lignite", "gen_mw": 9999.0}]
@@ -207,13 +209,17 @@ def test_drivers_frame_has_pivoted_gen_columns_and_load_mw(drivers_warehouse: Pa
 
 def test_drivers_frame_pivoted_values_match_fixture(drivers_warehouse: Path) -> None:
     df = analysis.drivers_frame().set_index("ts_utc")
+    # Every one of the ten pivoted gen_<fuel> columns must carry the exact
+    # fixture value for both hours — catches any fuel/column mislabeling in
+    # the pivot, not just at the sampled corners.
+    for ts, fuels in ((_TS1, _FUELS_TS1), (_TS2, _FUELS_TS2)):
+        row = df.loc[ts]
+        for fuel, expected in fuels.items():
+            assert row[f"gen_{fuel}"] == expected, f"gen_{fuel} at {ts}"
+
     row1 = df.loc[_TS1]
-    assert row1["gen_lignite"] == 5000.0
-    assert row1["gen_other"] == 70.0
     assert row1["load_mw"] == 14800.0
     assert row1["price_pln_mwh"] == 400.0
 
     row2 = df.loc[_TS2]
-    assert row2["gen_wind_onshore"] == 900.0
-    assert row2["gen_hydro_res"] == 90.0
     assert row2["load_mw"] == 15200.0
