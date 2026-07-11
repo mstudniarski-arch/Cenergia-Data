@@ -26,6 +26,20 @@ from cenergia.warehouse import db
 
 _SNAPSHOT_MARTS: tuple[str, ...] = ("price_daily", "typical_shape", "merit_order", "qa_overlap")
 
+# Tables whose grain is one row per ts_utc (so ts_utc must be unique). Excludes
+# staging.gen_mix_hourly (deliberately (ts_utc, fuel) long-grain) and the
+# date-/season-grained tables (fx_daily, price_daily, typical_shape).
+_TS_GRAIN_TABLES: tuple[str, ...] = (
+    "staging.price_pse_hourly",
+    "staging.price_hourly",
+    "staging.load_hourly",
+    "staging.res_hourly",
+    "staging.weather_hourly",
+    "marts.modeling_hourly",
+    "marts.merit_order",
+    "marts.qa_overlap",
+)
+
 
 def cmd_ember_slice(raw: Path, ember_csv: Path = paths.EMBER_CSV) -> None:
     ember_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -116,8 +130,123 @@ def cmd_snapshot(
     recent.to_parquet(snapshot_dir / "recent_hourly.parquet")
 
 
-def cmd_validate() -> int:
-    print("validate: thresholds wired in Task 13")
+def _report(label: str, ok: bool, detail: str) -> bool:
+    print(f"[{'PASS' if ok else 'FAIL'}] {label}: {detail}")
+    return ok
+
+
+def cmd_validate(db_path: Path = paths.DB_PATH) -> int:
+    """Assert real-warehouse invariants (Task 13 thresholds).
+
+    A plain function over a db path so it is exercisable against a fixture
+    warehouse without a live network. Prints one line per check and raises
+    SystemExit(1) if any check fails (after printing every line).
+    """
+    con = db.connect(db_path)
+    today = date.today()
+    checks: list[bool] = []
+
+    ph = con.execute(
+        "select count(*) as n, max(ts_utc) as max_ts, "
+        "bool_or(source = 'ember') as has_ember, bool_or(source = 'pse') as has_pse "
+        "from staging.price_hourly"
+    ).df()
+    n_ph = int(ph["n"].iloc[0])
+    max_ts = pd.Timestamp(ph["max_ts"].iloc[0])
+    gap_days = abs((today - max_ts.date()).days)
+    has_ember = bool(ph["has_ember"].iloc[0])
+    has_pse = bool(ph["has_pse"].iloc[0])
+    checks.append(
+        _report(
+            "staging.price_hourly",
+            n_ph > 95_000 and gap_days <= 3 and has_ember and has_pse,
+            f"rows={n_ph:,} (>95,000); max_ts={max_ts:%Y-%m-%d %H:%M}Z gap={gap_days}d (<=3); "
+            f"sources ember={has_ember} pse={has_pse}",
+        )
+    )
+
+    cov = con.execute(
+        "with daily as (select cast(ts_utc as date) as d, count(*) as n "
+        "from staging.price_pse_hourly where cast(ts_utc as date) >= date '2024-06-15' "
+        "group by 1) "
+        "select count(*) filter (where n < 22 or n > 26) as bad_days, count(*) as total_days, "
+        "min(n) as min_n, max(n) as max_n from daily"
+    ).df()
+    bad_days = int(cov["bad_days"].iloc[0])
+    total_days = int(cov["total_days"].iloc[0])
+    min_n = int(cov["min_n"].iloc[0])
+    max_n = int(cov["max_n"].iloc[0])
+    checks.append(
+        _report(
+            "staging.price_pse_hourly daily coverage",
+            bad_days == 0,
+            f"{total_days:,} UTC-days since 2024-06-15; per-day rows in "
+            f"[{min_n},{max_n}]; {bad_days} outside [22,26]",
+        )
+    )
+
+    nq = con.execute(
+        "select avg(case when n_quarters = 4 then 1.0 else 0.0 end) as frac4, count(*) as n "
+        "from staging.price_pse_hourly"
+    ).df()
+    frac4 = float(nq["frac4"].iloc[0])
+    checks.append(
+        _report(
+            "staging.price_pse_hourly n_quarters",
+            frac4 > 0.99,
+            f"n_quarters==4 for {frac4:.4%} of {int(nq['n'].iloc[0]):,} rows (>99%)",
+        )
+    )
+
+    mh = con.execute(
+        "select count(*) as n, "
+        "avg(case when load_fcst_mw is not null then 1.0 else 0.0 end) as load_nn, "
+        "avg(case when temp_c is not null and wind_ms is not null and ghi_wm2 is not null "
+        "and cloud_pct is not null then 1.0 else 0.0 end) as wx_nn "
+        "from marts.modeling_hourly"
+    ).df()
+    n_mh = int(mh["n"].iloc[0])
+    load_nn = float(mh["load_nn"].iloc[0])
+    wx_nn = float(mh["wx_nn"].iloc[0])
+    checks.append(
+        _report(
+            "marts.modeling_hourly",
+            n_mh > 15_000 and load_nn > 0.95 and wx_nn > 0.95,
+            f"rows={n_mh:,} (>15,000); load_fcst non-null={load_nn:.4%} (>95%); "
+            f"weather non-null={wx_nn:.4%} (>95%)",
+        )
+    )
+
+    qa = con.execute(
+        "select median(abs_diff) as med, corr(ember_pln, pse_pln) as corr, count(*) as n "
+        "from marts.qa_overlap"
+    ).df()
+    med = float(qa["med"].iloc[0])
+    corr = float(qa["corr"].iloc[0])
+    checks.append(
+        _report(
+            "marts.qa_overlap",
+            med < 25.0 and corr > 0.97,
+            f"median(abs_diff)={med:.2f} PLN/MWh (<25); corr(ember,pse)={corr:.4f} (>0.97); "
+            f"n={int(qa['n'].iloc[0]):,}",
+        )
+    )
+
+    for table in _TS_GRAIN_TABLES:
+        dup = con.execute(f"select count(*) as c, count(distinct ts_utc) as d from {table}").df()
+        c = int(dup["c"].iloc[0])
+        d = int(dup["d"].iloc[0])
+        checks.append(
+            _report(
+                f"{table} ts_utc uniqueness",
+                c == d,
+                f"count={c:,} distinct={d:,} ({c - d} dup)",
+            )
+        )
+
+    con.close()
+    if not all(checks):
+        raise SystemExit(1)
     return 0
 
 

@@ -92,10 +92,3 @@ def test_validate_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_missing_command_errors() -> None:
     with pytest.raises(SystemExit):
         pipeline.main([])
-
-
-def test_validate_stub_prints_and_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    result = pipeline.cmd_validate()
-    out = capsys.readouterr().out
-    assert "Task 13" in out
-    assert result == 0
