@@ -1,0 +1,22 @@
+{
+  "train_end": "2026-06-11T21:00:00",
+  "trained_rows": 17280,
+  "features": [
+    "price_lag24",
+    "price_lag48",
+    "price_lag168",
+    "price_roll7d_mean",
+    "price_roll7d_std",
+    "load_fcst_mw",
+    "temp_c",
+    "wind_ms",
+    "ghi_wm2",
+    "cloud_pct",
+    "hour_local",
+    "dow_local",
+    "month_local",
+    "is_holiday",
+    "is_weekend",
+    "post_break"
+  ]
+}
