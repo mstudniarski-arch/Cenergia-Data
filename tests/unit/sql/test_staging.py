@@ -1,4 +1,28 @@
+from pathlib import Path
+
 import duckdb
+
+from cenergia.ingest.openmeteo import cities_frame
+from cenergia.warehouse import db
+from tests.helpers import empty_ember_frame, empty_nbp_frame, raw_frames
+
+SQL_DIR = Path(__file__).parents[3] / "sql"
+
+
+def test_price_long_tolerates_empty_ember_and_nbp() -> None:
+    """Task 18's live path supplies empty ember_pl/nbp_fx stubs (no Ember/FX
+    backfill needed for the PSE-only live pull). `03_staging_price_long.sql`
+    reads raw.ember_pl directly and raw.nbp_fx (via staging.fx_daily) — with
+    both empty, the union must still succeed and yield only PSE rows.
+    """
+    c = db.connect(":memory:")
+    frames = {**raw_frames(), "nbp_fx": empty_nbp_frame(), "ember_pl": empty_ember_frame()}
+    db.load_frames(c, frames)
+    db.load_frames(c, {"weather_cities": cities_frame()})
+    db.run_sql(c, SQL_DIR)
+
+    rows = c.execute("select source, count(*) from staging.price_hourly group by 1").fetchall()
+    assert dict(rows) == {"pse": 2}
 
 
 def test_price_pse_hourly_interval_start_and_aggregation(con: duckdb.DuckDBPyConnection) -> None:

@@ -3,6 +3,10 @@
 
 Loads the snapshot once, then dispatches to a pure `render(snap)` view per
 sidebar page. No data loading happens inside the views themselves.
+
+The forecast page imports `cenergia.dashboard.live` lazily (inside the
+`else` branch below, not at module scope) so that AppTest runs of the other
+two pages never import `requests`/pull live PSE/Open-Meteo data.
 """
 
 from __future__ import annotations
@@ -34,7 +38,10 @@ def main() -> None:
     elif page == "Price drivers":
         drivers.render(snap)
     else:
-        st.info("coming in Task 18")
+        from cenergia.dashboard import live
+        from cenergia.dashboard.views import forecast
+
+        forecast.render(live.get_live_forecast())
 
 
 main()

@@ -8,9 +8,12 @@ disk), so both stay in sync.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
+
+from cenergia.ingest.openmeteo import CITIES
 
 
 def _pse_quarters(
@@ -106,3 +109,87 @@ def seed_raw_dir(raw_dir: Path, ember_csv: Path) -> None:
     for name, frame in raw_frames().items():
         frame.to_parquet(raw_dir / f"{name}.parquet", index=False)
     ember_frame().to_csv(ember_csv, index=False)
+
+
+def hourly_pse_frames(start: str, hours: int) -> dict[str, pd.DataFrame]:
+    """`hours` consecutive hourly rows (each replicated x4 as identical
+    quarters, i.e. the pre-2025-10-01 "replicated-hourly" regime — see
+    `raw_frames`) of PSE price/load/RES data starting at UTC `start`.
+
+    Values are deterministic but vary with a slow sinusoid so downstream lag
+    and rolling-window features aren't degenerate (zero variance). Used by
+    Task 18's live-forecast tests, which need many days of data (weeks, not
+    the 1-2 hours `raw_frames` provides) without per-quarter realism.
+    """
+
+    def _rep(values: list[float]) -> list[float]:
+        return [v for v in values for _ in range(4)]
+
+    price = [220.0 + 60.0 * math.sin(h / 24 * 2 * math.pi) + 3.0 * (h % 24) for h in range(hours)]
+    load = [17000.0 + 2500.0 * math.sin(h / 24 * 2 * math.pi) for h in range(hours)]
+    wind = [1800.0 + 700.0 * math.sin(h / 60) for h in range(hours)]
+    pv = [max(0.0, 900.0 * math.sin(((h % 24) - 6) / 12 * math.pi)) for h in range(hours)]
+
+    csdac = _pse_quarters(start, hours, _rep(price), "csdac_pln")
+    kse_load = _pse_quarters(start, hours, _rep(load), "load_fcst")
+    kse_load["load_actual"] = _rep(load)
+    wlk = _pse_quarters(start, hours, _rep(wind), "wi")
+    wlk["pv"] = _rep(pv)
+
+    return {"pse_csdac_pln": csdac, "pse_kse_load": kse_load, "pse_his_wlk_cal": wlk}
+
+
+def hourly_weather_frame(start: str, hours: int) -> pd.DataFrame:
+    """`hours` hourly rows across all `openmeteo.CITIES` starting at UTC
+    `start` — matches `openmeteo.fetch_forecast`/`fetch_history` output shape.
+    """
+    ts = pd.date_range(start, periods=hours, freq="h")
+    temp = [10.0 + 8.0 * math.sin(i / 24 * 2 * math.pi) for i in range(hours)]
+    wind = [4.0 + 2.0 * math.sin(i / 30) for i in range(hours)]
+    ghi = [max(0.0, 400.0 * math.sin(((i % 24) - 6) / 12 * math.pi)) for i in range(hours)]
+    cloud = [50.0 + 30.0 * math.sin(i / 15) for i in range(hours)]
+    frames = [
+        pd.DataFrame(
+            {
+                "city": city.name,
+                "ts_utc": ts,
+                "temp_c": temp,
+                "wind_ms": wind,
+                "ghi_wm2": ghi,
+                "cloud_pct": cloud,
+            }
+        )
+        for city in CITIES
+    ]
+    return pd.concat(frames, ignore_index=True)
+
+
+def empty_gen_frame() -> pd.DataFrame:
+    """Empty `pse_his_gen_pal` stub — right columns/dtypes, zero rows. Live
+    forecasting doesn't need generation-mix history (Task 18); `dtype="string"`
+    (not plain `object`) matters here — an empty object-dtype column registers
+    with DuckDB as INTEGER, breaking `try_strptime(dtime_utc, ...)`.
+    """
+    return pd.DataFrame(
+        {
+            "dtime_utc": pd.Series(dtype="string"),
+            "alias_entsoe": pd.Series(dtype="string"),
+            "value": pd.Series(dtype="float64"),
+        }
+    )
+
+
+def empty_nbp_frame() -> pd.DataFrame:
+    """Empty `nbp_fx` stub — `01_staging_fx.sql` tolerates a bounds-less spine."""
+    return pd.DataFrame(
+        {"date": pd.Series(dtype="datetime64[ns]"), "eur_pln": pd.Series(dtype="float64")}
+    )
+
+
+def empty_ember_frame() -> pd.DataFrame:
+    """Empty `ember_pl` stub — `03_staging_price_long.sql`'s union then yields
+    only PSE rows.
+    """
+    return pd.DataFrame(
+        {"ts_utc": pd.Series(dtype="datetime64[ns]"), "price_eur_mwh": pd.Series(dtype="float64")}
+    )
