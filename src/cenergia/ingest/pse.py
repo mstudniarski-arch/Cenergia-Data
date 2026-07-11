@@ -15,7 +15,10 @@ import pandas as pd
 import requests
 
 PSE_BASE = "https://api.raporty.pse.pl/api"
-ENTITIES: tuple[str, ...] = ("csdac-pln", "rce-pln", "kse-load", "his-gen-pal", "his-wlk-cal")
+# csdac-pln is the D+1 day-ahead auction price series used throughout the
+# pipeline; rce-pln (real-time settlement price) is deliberately omitted —
+# nothing downstream consumes raw.pse_rce_pln.
+ENTITIES: tuple[str, ...] = ("csdac-pln", "kse-load", "his-gen-pal", "his-wlk-cal")
 _TIMEOUT = 60
 _PAGE_SIZE = 50_000
 _CHUNK_DAYS = 90
@@ -33,7 +36,12 @@ def _get(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
             resp = requests.get(url, params=params, timeout=_TIMEOUT)
             resp.raise_for_status()
             return resp.json()  # type: ignore[no-any-return]
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as exc:
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.HTTPError,
+            requests.exceptions.JSONDecodeError,
+        ) as exc:
             last = exc
             if attempt < _RETRIES:
                 time.sleep(2**attempt)

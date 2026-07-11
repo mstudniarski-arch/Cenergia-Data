@@ -56,7 +56,12 @@ def _get(url: str, params: dict[str, Any]) -> dict[str, Any]:
             resp = requests.get(url, params=params, timeout=_TIMEOUT)
             resp.raise_for_status()
             return resp.json()  # type: ignore[no-any-return]
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as exc:
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.HTTPError,
+            requests.exceptions.JSONDecodeError,
+        ) as exc:
             last = exc
             if attempt < _RETRIES:
                 time.sleep(2**attempt)

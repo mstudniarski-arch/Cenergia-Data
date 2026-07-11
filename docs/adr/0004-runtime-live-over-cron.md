@@ -32,3 +32,9 @@ broken page.
   of API latency while the window is fetched (on top of the scale-to-zero cold start).
   Acceptable for a portfolio dashboard; a high-traffic service would want a warm cache or a
   background refresh instead.
+- **Downside:** the live forecast is structurally unavailable before PSE publishes the D+1
+  day-ahead auction result (~13:00 Europe/Warsaw) — `marts.modeling_hourly` anchors rows on
+  published prices and `build_matrix` drops the not-yet-published tomorrow rows as NaN, so
+  the "Tomorrow's forecast" panel has nothing to show until then and the page falls back to
+  the trailing accuracy view only. This is inherent to computing at request time rather than
+  a scheduling gap; a cron job publishing at a fixed time would have the same wait.

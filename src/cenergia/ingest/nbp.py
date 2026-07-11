@@ -29,7 +29,12 @@ def _get_chunk(start: date, end: date) -> list[dict[str, Any]]:
                 return []
             resp.raise_for_status()
             return list(resp.json()["rates"])
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as exc:
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.HTTPError,
+            requests.exceptions.JSONDecodeError,
+        ) as exc:
             last = exc
             if attempt < _RETRIES:
                 time.sleep(2**attempt)

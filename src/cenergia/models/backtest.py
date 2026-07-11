@@ -26,7 +26,12 @@ class BacktestResult:
 
 
 def _local_period(idx: pd.DatetimeIndex) -> pd.PeriodIndex:
-    return idx.tz_localize("UTC").tz_convert("Europe/Warsaw").to_period("M")
+    # tz_localize(None) before to_period: PeriodIndex has no tz concept, and
+    # converting a tz-aware index straight to a period silently drops the tz
+    # info anyway — but with a UserWarning on every call. Dropping it
+    # ourselves after the UTC->Warsaw conversion (so the wall-clock values
+    # are already local) keeps the same period boundaries without the noise.
+    return idx.tz_localize("UTC").tz_convert("Europe/Warsaw").tz_localize(None).to_period("M")
 
 
 def month_start_utc(month: pd.Period) -> pd.Timestamp:

@@ -13,7 +13,9 @@ prices from 2015 to now; 96 tests; `mypy --strict`.
 
 **Live demo → https://cenergia-mski.fly.dev** &nbsp;(scale-to-zero on Fly; the first
 request cold-starts the machine and takes ~6 s — it isn't broken, it's waking up. Page 3
-computes a real next-day forecast at request time.)
+computes a real next-day forecast at request time. The forecast panel populates once PSE
+publishes the day-ahead auction result for tomorrow (early afternoon CET); before that, the
+page shows the trailing accuracy view only.)
 
 ![Cenergia dashboard — 11 years of Polish day-ahead prices](docs/img/dashboard.png)
 

@@ -1,12 +1,28 @@
+import re
 from pathlib import Path
 
 import duckdb
 
+from cenergia.features.matrix import BREAK_TS_UTC
 from cenergia.ingest.openmeteo import cities_frame
 from cenergia.warehouse import db
 from tests.helpers import empty_ember_frame, empty_nbp_frame, raw_frames
 
 SQL_DIR = Path(__file__).parents[3] / "sql"
+
+
+def test_price_long_break_literal_matches_python_constant() -> None:
+    """`03_staging_price_long.sql`'s `is_15min_regime` cutoff is a hand-typed
+    SQL literal that has to stay in lockstep with
+    `cenergia.features.matrix.BREAK_TS_UTC` (the same boundary used by
+    `build_matrix`'s `post_break` feature) — nothing enforces that at
+    runtime, so pin it here.
+    """
+    sql_text = (SQL_DIR / "03_staging_price_long.sql").read_text()
+    literals = re.findall(r"timestamp '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})'", sql_text)
+    assert literals  # the regex must actually find the literal(s)
+    expected = BREAK_TS_UTC.strftime("%Y-%m-%d %H:%M:%S")
+    assert all(literal == expected for literal in literals)
 
 
 def test_price_long_tolerates_empty_ember_and_nbp() -> None:

@@ -47,17 +47,24 @@ def render(live: LiveForecast) -> None:
     col1, col2 = st.columns([3, 1])
     with col1:
         if tomorrow.empty:
-            st.info("Tomorrow's day-ahead price isn't available yet — check back later today.")
+            st.info(
+                "Tomorrow's day-ahead price isn't published yet — PSE typically releases the "
+                "D+1 auction result around 13:00 CET, so this panel populates in the early "
+                "afternoon. Check back after then."
+            )
         else:
             st.plotly_chart(_tomorrow_figure(tomorrow), use_container_width=True)
     with col2:
-        trailing_mae = _trailing_mae(live.frame)
+        trailing_mae = _trailing_mae(live.frame, live.made_at_utc)
         st.metric(
             "Trailing MAE (30d)",
             f"{trailing_mae:,.1f} PLN/MWh" if trailing_mae is not None else "n/a",
         )
 
-    st.plotly_chart(_trailing_figure(live.frame), use_container_width=True)
+    st.plotly_chart(
+        _trailing_figure(_strictly_before_today(live.frame, live.made_at_utc)),
+        use_container_width=True,
+    )
 
     st.caption(f"Model trained on data through {live.train_end}; later days are out-of-sample.")
 
@@ -92,8 +99,27 @@ def _tomorrow_window_utc(made_at_utc: pd.Timestamp) -> tuple[pd.Timestamp, pd.Ti
     return start_utc, end_utc
 
 
-def _trailing_mae(frame: pd.DataFrame) -> float | None:
-    valid = frame.dropna(subset=["y_actual", "y_pred"])
+def _today_start_utc(made_at_utc: pd.Timestamp) -> pd.Timestamp:
+    """UTC instant of Warsaw-local midnight that starts `made_at_utc`'s local
+    calendar day — the cutoff below which hours are fully in the past and
+    can't include today's/tomorrow's already-published prices.
+    """
+    local_now = made_at_utc.tz_localize("UTC").tz_convert(_WARSAW_TZ)
+    start_local = pd.Timestamp(local_now.date(), tz=_WARSAW_TZ)
+    return start_local.tz_convert("UTC").tz_localize(None)
+
+
+def _strictly_before_today(frame: pd.DataFrame, made_at_utc: pd.Timestamp) -> pd.DataFrame:
+    cutoff = _today_start_utc(made_at_utc)
+    return frame.loc[frame["ts_utc"] < cutoff]
+
+
+def _trailing_mae(frame: pd.DataFrame, made_at_utc: pd.Timestamp) -> float | None:
+    # Restricted to strictly-before-today rows: today's/tomorrow's hours can
+    # already have a published y_actual (the auction result lands ~13:00
+    # CET, hours before the delivery day ends), which would otherwise let
+    # already-known, same-day prices leak into a metric labeled "30d".
+    valid = _strictly_before_today(frame, made_at_utc).dropna(subset=["y_actual", "y_pred"])
     if valid.empty:
         return None
     return mae(valid["y_actual"], valid["y_pred"])

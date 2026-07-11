@@ -62,3 +62,27 @@ def test_connection_error_retries_then_raises(monkeypatch: pytest.MonkeyPatch) -
     with pytest.raises(nbp.NbpApiError):
         nbp.fetch_eur_pln(date(2015, 1, 1), date(2015, 1, 2))
     assert attempts["n"] == 4  # 1 try + 3 retries
+
+
+def test_json_decode_error_retries_then_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed/non-JSON body (e.g. an HTML error page returned with a 200
+    status) must be retried like a connection failure, not propagate a raw
+    JSONDecodeError out of the client.
+    """
+    attempts = {"n": 0}
+
+    class BadJsonResponse(FakeResponse):
+        def json(self) -> dict[str, Any]:
+            raise nbp.requests.exceptions.JSONDecodeError(  # type: ignore[attr-defined]
+                "Expecting value", "<html>not json</html>", 0
+            )
+
+    def fake_get(url: str, timeout: int = 0) -> FakeResponse:
+        attempts["n"] += 1
+        return BadJsonResponse({})
+
+    monkeypatch.setattr(nbp.requests, "get", fake_get)  # type: ignore[attr-defined]
+    monkeypatch.setattr(nbp.time, "sleep", lambda s: None)  # type: ignore[attr-defined]
+    with pytest.raises(nbp.NbpApiError):
+        nbp.fetch_eur_pln(date(2015, 1, 1), date(2015, 1, 2))
+    assert attempts["n"] == 4  # 1 try + 3 retries
