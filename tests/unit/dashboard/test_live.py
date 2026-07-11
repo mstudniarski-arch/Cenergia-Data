@@ -116,10 +116,21 @@ def test_happy_path_predicts_24_hours_for_tomorrow(live_artifact: str) -> None:
     assert result.train_end == live_artifact
     assert list(result.frame.columns) == ["ts_utc", "y_pred", "y_actual"]
 
-    tomorrow_start = NOW_UTC.normalize() + pd.Timedelta(days=1)
-    tomorrow_end = tomorrow_start + pd.Timedelta(hours=23)
+    # PSE delivery days are Europe/Warsaw *local* calendar days, not UTC
+    # calendar days (Warsaw's UTC offset is never zero) — derived
+    # independently here (not by calling into views/forecast.py) so a bug in
+    # that module's own boundary math wouldn't be invisible to this test.
+    # This exact mismatch was caught by the manual live check (task-18
+    # report): a naive `NOW_UTC.normalize() + 1 day` boundary only picked up
+    # 22/24 hours.
+    local_now = NOW_UTC.tz_localize("UTC").tz_convert("Europe/Warsaw")
+    tomorrow_local_date = (local_now + pd.Timedelta(days=1)).date()
+    start_local = pd.Timestamp(tomorrow_local_date, tz="Europe/Warsaw")
+    end_local = start_local + pd.Timedelta(days=1)
+    tomorrow_start = start_local.tz_convert("UTC").tz_localize(None)
+    tomorrow_end = end_local.tz_convert("UTC").tz_localize(None)
     tomorrow = result.frame[
-        (result.frame["ts_utc"] >= tomorrow_start) & (result.frame["ts_utc"] <= tomorrow_end)
+        (result.frame["ts_utc"] >= tomorrow_start) & (result.frame["ts_utc"] < tomorrow_end)
     ]
     assert len(tomorrow) == 24
     assert tomorrow["y_pred"].notna().all()

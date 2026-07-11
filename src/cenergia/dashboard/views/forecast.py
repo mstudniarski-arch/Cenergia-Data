@@ -17,6 +17,13 @@ from cenergia.dashboard.live import LiveForecast
 from cenergia.dashboard.views import _palette as pal
 from cenergia.models.metrics import mae
 
+# PSE delivery days are Europe/Warsaw *local* calendar days, not UTC calendar
+# days — a naive `made_at_utc.normalize() + 1 day` boundary silently drops
+# the first 1-2 hours of "tomorrow" (and includes hours from the day after)
+# whenever Warsaw's UTC offset isn't zero, i.e. always. Caught by the manual
+# live check (22/24 rows), not by unit tests with dense synthetic data.
+_WARSAW_TZ = "Europe/Warsaw"
+
 
 def render(live: LiveForecast) -> None:
     st.header("Tomorrow's forecast")
@@ -50,10 +57,22 @@ def render(live: LiveForecast) -> None:
 
 
 def _tomorrow_slice(frame: pd.DataFrame, made_at_utc: pd.Timestamp) -> pd.DataFrame:
-    start = made_at_utc.normalize() + pd.Timedelta(days=1)
-    end = start + pd.Timedelta(days=1)
+    start, end = _tomorrow_window_utc(made_at_utc)
     mask = (frame["ts_utc"] >= start) & (frame["ts_utc"] < end)
     return frame.loc[mask].sort_values("ts_utc")
+
+
+def _tomorrow_window_utc(made_at_utc: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """[start, end) UTC bounds of the Warsaw-local calendar day after
+    `made_at_utc` — 23/24/25 hours across a DST transition, 24 otherwise.
+    """
+    local_now = made_at_utc.tz_localize("UTC").tz_convert(_WARSAW_TZ)
+    tomorrow_local_date = (local_now + pd.Timedelta(days=1)).date()
+    start_local = pd.Timestamp(tomorrow_local_date, tz=_WARSAW_TZ)
+    end_local = start_local + pd.Timedelta(days=1)
+    start_utc = start_local.tz_convert("UTC").tz_localize(None)
+    end_utc = end_local.tz_convert("UTC").tz_localize(None)
+    return start_utc, end_utc
 
 
 def _trailing_mae(frame: pd.DataFrame) -> float | None:
