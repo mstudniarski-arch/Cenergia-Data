@@ -48,6 +48,55 @@ def price_hourly() -> pd.DataFrame:
     return df
 
 
+_GEN_FUELS: tuple[str, ...] = (
+    "lignite",
+    "hard_coal",
+    "gas",
+    "solar",
+    "wind_onshore",
+    "biomass",
+    "pumped_storage",
+    "hydro_ror",
+    "hydro_res",
+    "other",
+)
+
+
+def drivers_frame() -> pd.DataFrame:
+    """`marts.modeling_hourly` (one row per PSE-era hour) plus actual load and
+    the fuel-mix breakdown, for the price-drivers notebook.
+
+    Adds `load_mw` (`staging.load_hourly`) and one `gen_<fuel>` column per
+    fuel in `staging.gen_mix_hourly` (pivoted from its long `fuel`/`gen_mw`
+    form). Neither source table is in `WHITELISTED_TABLES` — they're staging
+    detail, not meant for ad-hoc dashboard loads — so, like `load_table`,
+    this opens its own short-lived read-only connection rather than widening
+    the whitelist.
+    """
+    fuel_cols_cte = ",\n            ".join(
+        f"max(case when fuel = '{fuel}' then gen_mw end) as gen_{fuel}" for fuel in _GEN_FUELS
+    )
+    fuel_cols_select = ", ".join(f"gw.gen_{fuel}" for fuel in _GEN_FUELS)
+    query = f"""
+        with gen_wide as (
+            select ts_utc,
+            {fuel_cols_cte}
+            from staging.gen_mix_hourly
+            group by ts_utc
+        )
+        select m.*, l.load_mw, {fuel_cols_select}
+        from marts.modeling_hourly m
+        left join staging.load_hourly l using (ts_utc)
+        left join gen_wide gw using (ts_utc)
+        order by m.ts_utc
+    """
+    con = duckdb.connect(str(paths.DB_PATH), read_only=True)
+    try:
+        return con.execute(query).df()
+    finally:
+        con.close()
+
+
 def yearly_stats() -> pd.DataFrame:
     """Per-year mean/std/min/max price and count of negative-price hours.
 
