@@ -1,0 +1,8 @@
+data/warehouse.duckdb
+data/raw/
+notebooks/
+results/
+tests/
+.venv/
+.git/
+docs/
