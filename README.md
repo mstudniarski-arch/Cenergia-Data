@@ -1,15 +1,13 @@
-# Cenergia
+# Cenergia-Data
 
 **Analytics and day-ahead price forecasting for the Polish electricity market — built on open data.**
 
-[![CI](https://github.com/mstudniarski-arch/cenergia/actions/workflows/ci.yml/badge.svg)](https://github.com/mstudniarski-arch/cenergia/actions)
-
-<!-- The CI badge resolves once this repo is pushed to GitHub (currently local/private). -->
+[![CI](https://github.com/mstudniarski-arch/Cenergia-Data/actions/workflows/ci.yml/badge.svg)](https://github.com/mstudniarski-arch/Cenergia-Data/actions)
 
 An end-to-end data project on real Polish power-market data: four public APIs → a DuckDB
 warehouse → a leakage-guarded feature matrix → an honestly evaluated day-ahead price
 forecaster → three narrative notebooks and a live Streamlit dashboard. 101,014 hourly
-prices from 2015 to now; 96 tests; `mypy --strict`.
+prices from 2015 to now; 98 tests; `mypy --strict`.
 
 **Live demo → https://cenergia-mski.fly.dev** &nbsp;(scale-to-zero on Fly; the first
 request cold-starts the machine and takes ~6 s — it isn't broken, it's waking up. Page 3
@@ -62,7 +60,7 @@ rMAE alongside the raw MAE it is built from, never instead of it, is the point.
 | Exploratory analysis | `notebooks/01` — eleven years, three regimes; distributions, ACF/PACF, duck-curve and negative-price quantification |
 | Feature engineering without leakage | `src/cenergia/features/matrix.py` + `tests/unit/features/test_leakage.py` — an availability-cutoff rule enforced by a pytest, not just a comment |
 | ML evaluation | `src/cenergia/models/backtest.py` + `results/backtest.csv` — walk-forward with honest baselines and a skill metric (rMAE), plus a worst-days error anatomy |
-| Software engineering | `.github/workflows/ci.yml` — 96 tests, `ruff`, `mypy --strict`, all green in CI |
+| Software engineering | `.github/workflows/ci.yml` — 98 tests, `ruff`, `mypy --strict`, all green in CI |
 | Communication | three narrative notebooks, this README, and a live dashboard |
 | Deployment | `Dockerfile.fly` + `fly.toml` — Streamlit on Fly.io, scale-to-zero, snapshot bundled in the image |
 
